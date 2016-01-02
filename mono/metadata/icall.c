@@ -936,6 +936,12 @@ ves_icall_System_Object_MemberwiseClone (MonoObject *this_obj)
 	return mono_object_clone (this_obj);
 }
 
+ICALL_EXPORT gulong
+ves_icall_System_Object_ObjAddr (MonoObject *obj)
+{
+	return (gulong) obj;
+}
+
 ICALL_EXPORT gint32
 ves_icall_System_ValueType_InternalGetHashCode (MonoObject *this_obj, MonoArray **fields)
 {
