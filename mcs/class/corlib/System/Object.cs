@@ -126,6 +126,9 @@ namespace System {
 
 		[MethodImplAttribute(MethodImplOptions.InternalCall)]
 		internal static extern int InternalGetHashCode (object o);
+
+		[MethodImplAttribute(MethodImplOptions.InternalCall)]
+		public extern static IntPtr ObjAddr (object o);
  
 #pragma warning disable 169
 		void FieldGetter (string typeName, string fieldName, ref object val)
