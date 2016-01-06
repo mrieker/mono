@@ -64,6 +64,7 @@
 #include "mini.h"
 #include "seq-points.h"
 #include "tasklets.h"
+#include "mmruthread.h"
 #include <string.h>
 #include <ctype.h>
 #include "trace.h"
@@ -3115,6 +3116,7 @@ mini_init (const char *filename, const char *runtime_version)
 #if MONO_SUPPORT_TASKLETS
 	mono_tasklets_init ();
 #endif
+	mmruthread_init ();
 
 	register_trampolines (domain);
 

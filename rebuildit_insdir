@@ -1,0 +1,10 @@
+#!/bin/bash -v
+cd `dirname $0`
+make distclean
+set -e
+insdir=`pwd`/insdir ## /usr
+mkdir -p $insdir
+./autogen.sh --prefix=$insdir --sysconfdir=$insdir/etc --with-large-heap=yes
+make get-monolite-latest
+time make -j7
+make install

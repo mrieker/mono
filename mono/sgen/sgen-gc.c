@@ -2598,9 +2598,19 @@ sgen_have_pending_finalizers (void)
 int
 sgen_register_root (char *start, size_t size, SgenDescriptor descr, int root_type)
 {
+	int rc;
+
+	LOCK_GC;
+	rc = sgen_register_root_locked (start, size, descr, root_type);
+	UNLOCK_GC;
+	return rc;
+}
+
+int
+sgen_register_root_locked (char *start, size_t size, SgenDescriptor descr, int root_type)
+{
 	RootRecord new_root;
 	int i;
-	LOCK_GC;
 	for (i = 0; i < ROOT_TYPE_NUM; ++i) {
 		RootRecord *root = sgen_hash_table_lookup (&roots_hash [i], start);
 		/* we allow changing the size and the descriptor (for thread statics etc) */
@@ -2611,7 +2621,6 @@ sgen_register_root (char *start, size_t size, SgenDescriptor descr, int root_typ
 			root->root_desc = descr;
 			roots_size += size;
 			roots_size -= old_size;
-			UNLOCK_GC;
 			return TRUE;
 		}
 	}
@@ -2624,22 +2633,27 @@ sgen_register_root (char *start, size_t size, SgenDescriptor descr, int root_typ
 
 	SGEN_LOG (3, "Added root for range: %p-%p, descr: %llx  (%d/%d bytes)", start, new_root.end_root, descr, (int)size, (int)roots_size);
 
-	UNLOCK_GC;
 	return TRUE;
 }
 
 void
 sgen_deregister_root (char* addr)
 {
+	LOCK_GC;
+	sgen_deregister_root_locked (addr);
+	UNLOCK_GC;
+}
+
+void
+sgen_deregister_root_locked (char* addr)
+{
 	int root_type;
 	RootRecord root;
 
-	LOCK_GC;
 	for (root_type = 0; root_type < ROOT_TYPE_NUM; ++root_type) {
 		if (sgen_hash_table_remove (&roots_hash [root_type], addr, &root))
 			roots_size -= (root.end_root - addr);
 	}
-	UNLOCK_GC;
 }
 
 /*

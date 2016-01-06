@@ -19,6 +19,7 @@ endif
 
 monosgen_sources = \
 	gc-internal-agnostic.h \
+	mmruthread_sgen.c \
 	sgen-alloc.c \
 	sgen-archdep.h \
 	sgen-cardtable.c \

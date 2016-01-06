@@ -1,0 +1,241 @@
+
+The MMRUThread class provides co-routines or stack switching for efficient
+user-mode thread switching in a co-operative environment.  They are an
+improvement over the supplied Continuations class in that they do not do a
+memcpy() and memset() to switch stacks, just a stack pointer register swap.
+This also allows the microthreads to be run from different macrothreads such as
+from a worker thread pool, as there is no 'mark top of stack' call that binds a
+microthread to a particular macrothread.
+
+To create a MMRUThread, instantiate the MMRUThread class.  When you are ready
+to run the microthread, pass the method to be run on the microthread stack to
+the MMRUThread object's Start() method.  Start() will call the given method on
+its own new stack.  If the given method returns, then it switches back to the
+macrothread stack and returns where Start() was called.
+
+If the given method calls Suspend(), perhaps through many call levels, the
+microthread stack pointer is saved and the macrothread stack pointer is
+restored, then it returns to where Start() was called.  When the macrothread's
+stack code is ready to resume the MMRUThread object, it calls its Resume()
+method.  At which point the stack pointers are swapped again until either the
+microthread stack routine calls Suspend() or Exit() or returns out.
+
+
+            Macrothread                 Microthread
+            -----------                 -----------
+            MMRUThread ut =
+                    new MMRUThread()
+                .
+                .
+                .
+            ut.Start(entry)     ->
+                                        entry()
+                                            .
+                                            .
+                                            .
+                                <-      Suspend()
+                .
+                .
+                .
+            ut.Resume()         ->
+                                            .
+                                            .
+                                            .
+                                <-      Suspend()
+                .
+                .
+                .
+            ut.Resume()         ->
+                                            .
+                                            .
+                                            .
+                                <-      Exit() or returns out
+                .
+                .
+                .
+            ut.Dispose()
+
+
+Notes:
+
+    A macrothread may call Start() or Dispose() instead of Resume() to restart
+    or dispose of the microthread if desired.
+
+    Resume() and Dispose() may be called from a different macrothread than that
+    which called Start(), provided the microthread has called Suspend() since
+    the most recent call to Start() or Resume().
+
+
+Valid transitions:
+
+    constructor()   ->  [it is now inactive]
+
+  [inactive, Active() returns 0]
+    ->  Start()     ->  [it is now running]
+    ->  Dispose()   ->  memory released
+    ->  Resume()    ->  exception thrown
+    ->  Suspend()   ->  exception thrown
+    ->  Exit()      ->  exception thrown
+
+  [running, Active() returns 1]
+    ->  entry() returns           ->  [it is now inactive]
+    ->  entry() throws exception  ->  [it is now inactive]
+    ->  entry() calls Exit()      ->  [it is now inactive]
+    ->  entry() calls Suspend()   ->  [it is now suspended]
+    ->  Start()     ->  exception thrown
+    ->  Dispose()   ->  exception thrown
+
+  [suspended, Active() returns -1]
+    ->  Resume()    ->  [it is now running, resumed from where it suspended]
+    ->  Start()     ->  [it is now running, but from beginning of entry()]
+    ->  Dispose()   ->  memory released
+    ->  Suspend()   ->  exception thrown
+    ->  Exit()      ->  exception thrown
+
+
+API provided Methods
+--------------------
+
+public void Start(Entry entry)
+
+    Called by macrothread code to switch to call the given method on the
+    microthread stack.
+
+    The microthread must be inactive or suspended and is transitioned to the
+    running state.
+
+
+public static void Suspend()
+
+    Called by microthread code to switch back to the macrothread code that most
+    recently transitioned the macrothread to the running state.  The
+    microthread must be in the running state and is transitioned to the
+    suspended state.  The microthread may subsequently be Resume()'d or
+    Start()'d.
+
+
+public static void Exit()
+
+    Called by microthread code to switch back to the macrothread code that most
+    recently transitioned the microthread to the running state.  The
+    microthread must be in the running state and is transitioned to the
+    inactive state.  The microthread may subsequently be Start()'d.
+
+
+public void Resume()
+
+    Called by macrothread code to switch to microthread code at the point where
+    the microthread last called Suspend().  The microthread must be in the
+    suspended state and is transitioned to the running state.
+
+
+public int Active()
+
+   Query the state of a microthread, returns:
+
+                    valid calls while in that state
+                    -------------------------------
+      0: inactive   Start(), Dispose()
+     -1: suspended  Start(), Resume(), Dispose()
+      1: running    Suspend(), Exit()
+
+
+public static MMRUThread Current()
+
+    Determine which microthread is calling Current().  Returns null if called
+    by a macrothread.
+
+
+public void Dispose()
+
+    Immediately releases stack memory used by the microthread object.
+    Call this when you will no longer use the uthread object.
+    The microthread must be either inactive or suspended.
+    The microthread object must not be used again.
+    This call is optional as the stack memory will be released when
+      the microthread object is garbage collected if Dispose() was not
+      called.  However since stack memory can be very large, Dispose()
+      should be called when it is known the microthread object will no
+      longer be used.
+
+
+Example program
+---------------
+
+using Mono.Tasklets;
+using System;
+using System.IO;
+
+public class UThreadExample {
+
+    public static int Main (string[] args) {
+
+        /*
+         * Print some silly message to start.
+         */
+        Console.WriteLine ("Hello World!");
+
+        /*
+         * Create a couple MMRUThread objects.
+         */
+        MMRUThread thread1 = new MMRUThread ();
+        MMRUThread thread2 = new MMRUThread ();
+
+        /*
+         * Start the microthreads and run the given methods until
+         * the given methods first call Suspend() or Exit().
+         */
+        Console.WriteLine ("Main: start thread 1");
+        thread1.Start (ThreadOneMain);
+        Console.WriteLine ("Main: start thread 2");
+        thread2.Start (ThreadTwoMain);
+
+        /*
+         * This is our 'scheduler' loop.  Run threads until all are
+         * inactive.
+         */
+        while ((thread1.Active () < 0) || (thread2.Active () < 0)) {
+            if (thread1.Active () < 0) {
+                Console.WriteLine ("Main: resume thread 1");
+                thread1.Resume ();
+            }
+            if (thread2.Active () < 0) {
+                Console.WriteLine ("Main: resume thread 2");
+                thread2.Resume ();
+            }
+        }
+
+        if (thread1.Active () != 0) {
+            Console.WriteLine ("Main: thread 1 is still active");
+        }
+        if (thread2.Active () != 0) {
+            Console.WriteLine ("Main: thread 2 is still active");
+        }
+
+        Console.WriteLine ("Main: all done!");
+
+        return 0;
+    }
+
+    public static void ThreadOneMain ()
+    {
+        Console.WriteLine ("ThreadOne: started");
+        MMRUThread.Suspend ();
+        Console.WriteLine ("ThreadOne: step 1");
+        MMRUThread.Suspend ();
+        Console.WriteLine ("ThreadOne: finished");
+    }
+
+    public static void ThreadTwoMain ()
+    {
+        Console.WriteLine ("ThreadTwo: started");
+        MMRUThread.Suspend ();
+        Console.WriteLine ("ThreadTwo: step 1");
+        MMRUThread.Suspend ();
+        Console.WriteLine ("ThreadTwo: step 2");
+        MMRUThread.Suspend ();
+        Console.WriteLine ("ThreadTwo: finished");
+        MMRUThread.Exit ();
+        Console.WriteLine ("ThreadTwo: don't see this");
+    }
+}
