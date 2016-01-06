@@ -1,0 +1,25 @@
+#!/bin/bash -v
+
+set -e
+
+cd `dirname $0`
+thisdir=`pwd`
+cd ..
+basedir=`pwd`
+cd $thisdir
+
+insdir=$basedir/insdir
+
+if [ uthreadtest.exe -ot uthreadtest.cs ]
+then
+    export PATH=$insdir/bin:$PATH
+    mcs -debug -out:uthreadtest.exe uthreadtest.cs -reference:Mono.Tasklets.dll
+fi
+
+export MONO_PATH=$insdir/lib/mono/4.5
+echo '=   =   =   ='
+../mono/mini/mono-boehm --debug uthreadtest.exe
+echo '=  =  =  =  ='
+../mono/mini/mono-sgen --debug uthreadtest.exe
+echo '= = = = = = ='
+

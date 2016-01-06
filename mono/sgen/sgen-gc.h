@@ -372,7 +372,9 @@ enum {
 extern SgenHashTable roots_hash [ROOT_TYPE_NUM];
 
 int sgen_register_root (char *start, size_t size, SgenDescriptor descr, int root_type, int source, const char *msg);
+int sgen_register_root_locked (char *start, size_t size, SgenDescriptor descr, int root_type, int source, const char *msg);
 void sgen_deregister_root (char* addr);
+void sgen_deregister_root_locked (char* addr);
 
 typedef void (*IterateObjectCallbackFunc) (GCObject*, size_t, void*);
 
