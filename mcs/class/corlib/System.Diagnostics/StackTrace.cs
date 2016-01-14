@@ -176,47 +176,43 @@ namespace System.Diagnostics {
 
 		bool AddFrames (StringBuilder sb)
 		{
-			bool printOffset;
-			string debugInfo, indentation;
-			string unknown = Locale.GetText ("<unknown method>");
-
-			indentation = "  ";
-			debugInfo = Locale.GetText (" in {0}:{1} ");
-
-			var newline = String.Format ("{0}{1}{2} ", Environment.NewLine, indentation,
-					Locale.GetText ("at"));
+			string debugInfo = Locale.GetText (" in {0}:{1}");
+			string startline = "  " + Locale.GetText ("at") + " ";
+			string unknown   = Locale.GetText ("<unknown method>");
 
 			int i;
 			for (i = 0; i < FrameCount; i++) {
 				StackFrame frame = GetFrame (i);
-				if (i == 0)
-					sb.AppendFormat ("{0}{1} ", indentation, Locale.GetText ("at"));
-				else
-					sb.Append (newline);
+				if (i > 0) sb.Append (Environment.NewLine);
+				sb.Append (startline);
 
-				if (frame.GetMethod () == null) {
-					string internal_name = frame.GetInternalMethodName ();
-					if (internal_name != null)
-						sb.Append (internal_name);
-					else
-						sb.AppendFormat ("<0x{0:x5} + 0x{1:x5}> {2}", frame.GetMethodAddress (), frame.GetNativeOffset (), unknown);
+				string internal_name = frame.GetInternalMethodName ();
+				if (internal_name != null) {
+					sb.Append (internal_name);
+					MethodAddress (sb, frame);
+				} else if (frame.GetMethod () == null) {
+					sb.AppendFormat ("<0x{0:x5} + 0x{1:x5}> {2}", frame.GetMethodAddress (), frame.GetNativeOffset (), unknown);
 				} else {
 					GetFullNameForStackTrace (sb, frame.GetMethod ());
-
-					if (frame.GetILOffset () == -1) {
-						sb.AppendFormat (" <0x{0:x5} + 0x{1:x5}>", frame.GetMethodAddress (), frame.GetNativeOffset ());
-						if (frame.GetMethodIndex () != 0xffffff)
-							sb.AppendFormat (" {0}", frame.GetMethodIndex ());
-					} else {
-						sb.AppendFormat (" [0x{0:x5}]", frame.GetILOffset ());
-					}
-
+					MethodAddress (sb, frame);
 					sb.AppendFormat (debugInfo, frame.GetSecureFileName (),
 					                 frame.GetFileLineNumber ());
 				}
 			}
 
 			return i != 0;
+		}
+
+		private static void MethodAddress (StringBuilder sb, StackFrame frame)
+		{
+			if (frame.GetILOffset () == -1) {
+				sb.AppendFormat (" <0x{0:x5} + 0x{1:x5}>", frame.GetMethodAddress (), frame.GetNativeOffset ());
+				if (frame.GetMethodIndex () != 0xffffff)
+					sb.AppendFormat (" {0}", frame.GetMethodIndex ());
+			} else {
+				sb.AppendFormat (" [0x{0:x5}]", frame.GetILOffset ());
+			}
+
 		}
 
 		// This method is also used with reflection by mono-symbolicate tool.

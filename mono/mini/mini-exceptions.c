@@ -638,13 +638,90 @@ mono_exception_walk_trace (MonoException *ex, MonoExceptionFrameWalk func, gpoin
 	return len > 0;
 }
 
+/**
+ * Fill in stack frame information given the address of an instruction.
+ * @param sf = stack frame to fill in (assumed to be newly allocated, ie, zeroed out)
+ * @param domain = domain the method is in
+ * @param ip = address of the method
+ * @param generic_info = ???
+ * @param need_file_info = indicate whether source location information wanted or not
+ */
+static void
+get_stack_frame_info (
+	MonoStackFrame *sf,
+	MonoDomain *domain,
+	gpointer ip,
+	gpointer generic_info,
+	MonoBoolean need_file_info)
+{
+	char *fullname;
+	MonoJitInfo *jitinfo;
+	MonoMethod *method;
+	MonoReflectionMethod *refmethod;
+
+	/*
+	 * Try to find JIT info about the method at the given address.
+	 * If not found, it is an unmanaged frame so we don't know anything about it.
+	 */
+	jitinfo = mono_jit_info_table_find (domain, ip);
+	if (jitinfo == NULL) return;
+
+	/*
+	 * Get internal method info and return reflection method info.
+	 */
+	method = get_method_from_stack_frame (jitinfo, generic_info);
+
+	/*
+	 * Always return reflection method unlike old code (so we can get dynamic method info).
+	 */
+	refmethod = mono_method_get_object (domain, method, NULL);
+	MONO_OBJECT_SETREF (sf, method, (MonoObject *)refmethod);
+
+	/*
+	 * Only fill in internal_method_name for wrapped method cuz that's what old code did,
+	 */
+	if (jinfo_get_method (jitinfo)->wrapper_type) {
+		fullname = mono_method_get_name_full (method, TRUE, MONO_TYPE_NAME_FORMAT_REFLECTION);
+		MONO_OBJECT_SETREF (sf, internal_method_name, mono_string_new (domain, fullname));
+		g_free (fullname);
+	}
+
+	/*
+	 * Various method info.
+	 */
+	sf->method_index = jitinfo->from_aot ? mono_aot_find_method_index (method) : 0xffffff;
+	sf->method_address = (gsize) jitinfo->code_start;
+
+	/*
+	 * Get byte offset of native instruction within the method.
+	 */
+	sf->native_offset = (gulong)ip - (gulong)jitinfo->code_start;
+
+	/*
+	 * Get byte offset of CIL instruction within the method.
+	 */
+	sf->il_offset = mono_debug_il_offset_from_address (method, domain, sf->native_offset);
+
+	/*
+	 * Maybe get corresponding source location information.
+	 */
+	if (need_file_info) {
+		MonoDebugSourceLocation *location = mono_debug_lookup_source_location (method, sf->native_offset, domain);
+		if (location != NULL) {
+			MONO_OBJECT_SETREF (sf, filename, (MonoObject*) mono_string_new (domain, location->source_file));
+			sf->line   = location->row;
+			sf->column = location->column;
+			mono_debug_free_source_location (location);
+		}
+	}
+}
+
 MonoArray *
 ves_icall_get_trace (MonoException *exc, gint32 skip, MonoBoolean need_file_info)
 {
 	MonoDomain *domain = mono_domain_get ();
 	MonoArray *res;
 	MonoArray *ta = exc->trace_ips;
-	MonoDebugSourceLocation *location;
 	int i, len;
 
 	if (ta == NULL) {
@@ -657,66 +734,13 @@ ves_icall_get_trace (MonoException *exc, gint32 skip, MonoBoolean need_file_info
 	res = mono_array_new (domain, mono_defaults.stack_frame_class, len > skip ? len - skip : 0);
 
 	for (i = skip; i < len; i++) {
-		MonoJitInfo *ji;
 		MonoStackFrame *sf = (MonoStackFrame *)mono_object_new (domain, mono_defaults.stack_frame_class);
 		gpointer ip = mono_array_get (ta, gpointer, i * 2 + 0);
 		gpointer generic_info = mono_array_get (ta, gpointer, i * 2 + 1);
-		MonoMethod *method;
 
-		ji = mono_jit_info_table_find (domain, (char *)ip);
-		if (ji == NULL) {
-			/* Unmanaged frame */
-			mono_array_setref (res, i, sf);
-			continue;
-		}
+		get_stack_frame_info (sf, domain, ip, generic_info, TRUE);
 
-		g_assert (ji != NULL);
-
-		method = get_method_from_stack_frame (ji, generic_info);
-		if (jinfo_get_method (ji)->wrapper_type) {
-			char *s;
-
-			sf->method = NULL;
-			s = mono_method_get_name_full (method, TRUE, MONO_TYPE_NAME_FORMAT_REFLECTION);
-			MONO_OBJECT_SETREF (sf, internal_method_name, mono_string_new (domain, s));
-			g_free (s);
-		}
-		else
-			MONO_OBJECT_SETREF (sf, method, mono_method_get_object (domain, method, NULL));
-
-		sf->method_index = ji->from_aot ? mono_aot_find_method_index (method) : 0xffffff;
-		sf->method_address = (gsize) ji->code_start;
-		sf->native_offset = (char *)ip - (char *)ji->code_start;
-
-		/*
-		 * mono_debug_lookup_source_location() returns both the file / line number information
-		 * and the IL offset.  Note that computing the IL offset is already an expensive
-		 * operation, so we shouldn't call this method twice.
-		 */
-		location = mono_debug_lookup_source_location (jinfo_get_method (ji), sf->native_offset, domain);
-		if (location) {
-			sf->il_offset = location->il_offset;
-		} else {
-			SeqPoint sp;
-			if (mono_find_prev_seq_point_for_native_offset (domain, jinfo_get_method (ji), sf->native_offset, NULL, &sp))
-				sf->il_offset = sp.il_offset;
-			else
-				sf->il_offset = -1;
-		}
-
-		if (need_file_info) {
-			if (location && location->source_file) {
-				MONO_OBJECT_SETREF (sf, filename, mono_string_new (domain, location->source_file));
-				sf->line = location->row;
-				sf->column = location->column;
-			} else {
-				sf->line = sf->column = 0;
-				sf->filename = NULL;
-			}
-		}
-
-		mono_debug_free_source_location (location);
-		mono_array_setref (res, i, sf);
+		mono_array_setref (res, i - skip, sf);
 	}
 
 	return res;
@@ -895,18 +919,14 @@ mono_walk_stack_full (MonoJitStackWalk func, MonoContext *start_ctx, MonoDomain 
 }
 
 MonoBoolean
-ves_icall_get_frame_info (gint32 skip, MonoBoolean need_file_info, 
-			  MonoReflectionMethod **method, 
-			  gint32 *iloffset, gint32 *native_offset,
-			  MonoString **file, gint32 *line, gint32 *column)
+ves_icall_get_frame_info (MonoStackFrame *sf, gint32 skip, MonoBoolean need_file_info)
 {
 	MonoDomain *domain = mono_domain_get ();
 	MonoJitTlsData *jit_tls = (MonoJitTlsData *)mono_native_tls_get_value (mono_jit_tls_id);
 	MonoLMF *lmf = mono_get_lmf ();
 	MonoJitInfo *ji = NULL;
 	MonoContext ctx, new_ctx;
-	MonoDebugSourceLocation *location;
-	MonoMethod *jmethod = NULL, *actual_method;
+	MonoMethod *jmethod;
 	StackFrameInfo frame;
 	gboolean res;
 
@@ -933,7 +953,6 @@ ves_icall_get_frame_info (gint32 skip, MonoBoolean need_file_info,
 			continue;
 
 		ji = frame.ji;
-		*native_offset = frame.native_offset;
 
 		/* The skip count passed by the caller depends on us not filtering out MANAGED_TO_NATIVE */
 		jmethod = jinfo_get_method (ji);
@@ -942,28 +961,8 @@ ves_icall_get_frame_info (gint32 skip, MonoBoolean need_file_info,
 		skip--;
 	} while (skip >= 0);
 
-	actual_method = get_method_from_stack_frame (ji, get_generic_info_from_stack_frame (ji, &ctx));
-
-	mono_gc_wbarrier_generic_store (method, (MonoObject*) mono_method_get_object (domain, actual_method, NULL));
-
-	location = mono_debug_lookup_source_location (jmethod, *native_offset, domain);
-	if (location)
-		*iloffset = location->il_offset;
-	else
-		*iloffset = 0;
-
-	if (need_file_info) {
-		if (location) {
-			mono_gc_wbarrier_generic_store (file, (MonoObject*) mono_string_new (domain, location->source_file));
-			*line = location->row;
-			*column = location->column;
-		} else {
-			*file = NULL;
-			*line = *column = 0;
-		}
-	}
-
-	mono_debug_free_source_location (location);
+	get_stack_frame_info (sf, domain, MONO_CONTEXT_GET_IP (&ctx),
+		get_generic_info_from_stack_frame (ji, &ctx), need_file_info);
 
 	return TRUE;
 }

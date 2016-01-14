@@ -2811,10 +2811,7 @@ gpointer mono_get_throw_exception_by_name       (void);
 gpointer mono_get_throw_corlib_exception        (void);
 
 MonoArray *ves_icall_get_trace                  (MonoException *exc, gint32 skip, MonoBoolean need_file_info);
-MonoBoolean ves_icall_get_frame_info            (gint32 skip, MonoBoolean need_file_info, 
-						 MonoReflectionMethod **method, 
-						 gint32 *iloffset, gint32 *native_offset,
-						 MonoString **file, gint32 *line, gint32 *column);
+MonoBoolean ves_icall_get_frame_info            (MonoStackFrame *sf, gint32 skip, MonoBoolean need_file_info);
 void mono_set_cast_details                      (MonoClass *from, MonoClass *to);
 
 /* Installs a function which is called when the runtime encounters an unhandled exception.

@@ -55,7 +55,7 @@ namespace System.Diagnostics {
 		private string fileName;
 		private int lineNumber;
 		private int columnNumber;
-        #pragma warning disable 649
+		#pragma warning disable 649
 		private string internalMethodName;
 		#pragma warning restore 649
 		#endregion
@@ -64,45 +64,33 @@ namespace System.Diagnostics {
 		extern static int GetILOffsetFromFile (string path, int methodToken, uint methodIndex, int nativeOffset);
 
 		[MethodImplAttribute(MethodImplOptions.InternalCall)]
-		extern static bool get_frame_info (int skip, bool needFileInfo, out MethodBase method,
-						   out int iloffset, out int native_offset,
-						   out string file, out int line, out int column);
+		extern static bool get_frame_info (StackFrame sf, int skip, bool needFileInfo);
 
                 public StackFrame ()
 		{
-			get_frame_info (2, false, out methodBase, out ilOffset,
-					out nativeOffset, out fileName, out lineNumber,
-					out columnNumber);			
+			get_frame_info (this, 2, false);
                 }
                 
 		public StackFrame (bool fNeedFileInfo)
 		{
-			get_frame_info (2, fNeedFileInfo, out methodBase, out ilOffset,
-					out nativeOffset, out fileName, out lineNumber,
-					out columnNumber);			
+			get_frame_info (this, 2, fNeedFileInfo);
                 }
                 
                 public StackFrame (int skipFrames)
 		{
-			get_frame_info (skipFrames + 2, false, out methodBase, out ilOffset,
-					out nativeOffset, out fileName, out lineNumber,
-					out columnNumber);			
+			get_frame_info (this, skipFrames + 2, false);
                 }
                 
                 public StackFrame (int skipFrames, bool fNeedFileInfo) 
 		{
-			get_frame_info (skipFrames + 2, fNeedFileInfo, out methodBase, out ilOffset,
-					out nativeOffset, out fileName, out lineNumber,
-					out columnNumber);
+			get_frame_info (this, skipFrames + 2, fNeedFileInfo);
                 }
                 
 		// LAMESPEC: According to the MSDN docs, this creates a frame with _only_
 		// the filename and lineNumber, but MS fills out the frame info as well.
                 public StackFrame (string fileName, int lineNumber)
 		{
-			get_frame_info (2, false, out methodBase, out ilOffset,
-					out nativeOffset, out fileName, out lineNumber,
-					out columnNumber);
+			get_frame_info (this, 2, false);
 			this.fileName = fileName;
 			this.lineNumber = lineNumber;
 			this.columnNumber = 0;
@@ -112,9 +100,7 @@ namespace System.Diagnostics {
 		// the filename, lineNumber and colNumber, but MS fills out the frame info as well.
                 public StackFrame (string fileName, int lineNumber, int colNumber)
 		{
-			get_frame_info (2, false, out methodBase, out ilOffset,
-					out nativeOffset, out fileName, out lineNumber,
-					out columnNumber);
+			get_frame_info (this, 2, false);
 			this.fileName = fileName;
 			this.lineNumber = lineNumber;
 			this.columnNumber = colNumber;
