@@ -234,7 +234,9 @@ mmruthread_dtor (MMRUThread **mmrUThread_r)
 	if (mmrUThread->micSP != 0) {
 		PRINTF ("mmruthread_dtor*: dereg %lX..%lX\n", mmrUThread->micSP, (gulong)stackAddr + stackSize - 1);
 		g_assert (stackAddr != 0);
+		mmruthread_lockgc ();
 		mmruthread_remroots ((char *)mmrUThread->micSP, (char *)stackAddr + stackSize);
+		mmruthread_unlkgc ();
 		mmrUThread->micSP = 0;
 		//mmruthread_printroots ();
 	}
