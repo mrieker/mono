@@ -7,18 +7,26 @@
 
 #if defined(MONO_SUPPORT_TASKLETS)
 
-static mono_mutex_t tasklets_mutex;
-#define tasklets_lock() mono_os_mutex_lock(&tasklets_mutex)
-#define tasklets_unlock() mono_os_mutex_unlock(&tasklets_mutex)
+int continuation_store (MonoContinuation *cont, int state, MonoException **e);
+int continuation_xtore (MonoContinuation *cont, int state, MonoException **e, gpointer rsp);
 
-/* LOCKING: tasklets_mutex is assumed to e taken */
 static void
-internal_init (void)
+free_stack (MonoContinuation *cont)
 {
-	if (!mono_gc_is_moving ())
-		/* Boehm requires the keepalive stacks to be kept in a hash since mono_gc_alloc_fixed () returns GC memory */
-		g_assert_not_reached ();
+	if (cont->saved_stack) {
+		mono_gc_deregister_root (cont->saved_stack);
+		g_free (cont->saved_stack);
+	}
 }
+
+static void
+alloc_stack (MonoContinuation *cont)
+{
+	cont->saved_stack = g_malloc0 (cont->stack_alloc_size);
+	mono_gc_register_root (cont->saved_stack, cont->stack_alloc_size, 
+		MONO_GC_DESCRIPTOR_NULL, MONO_ROOT_SOURCE_THREADING, "saved tasklet stack");
+}
+
 
 static void*
 continuation_alloc (void)
@@ -30,8 +38,7 @@ continuation_alloc (void)
 static void
 continuation_free (MonoContinuation *cont)
 {
-	if (cont->saved_stack)
-		mono_gc_free_fixed (cont->saved_stack);
+	free_stack (cont);
 	g_free (cont);
 }
 
@@ -51,6 +58,8 @@ continuation_mark_frame (MonoContinuation *cont)
 	lmf = mono_get_lmf();
 	cont->domain = mono_domain_get ();
 	cont->thread_id = mono_native_thread_id_get ();
+
+	MONO_INIT_CONTEXT_FROM_FUNC (&ctx, continuation_mark_frame);
 
 	/* get to the frame that called Mark () */
 	memset (&rji, 0, sizeof (rji));
@@ -72,8 +81,8 @@ continuation_mark_frame (MonoContinuation *cont)
 	return NULL;
 }
 
-static int
-continuation_store (MonoContinuation *cont, int state, MonoException **e)
+int
+continuation_xtore (MonoContinuation *cont, int state, MonoException **e, gpointer rsp)
 {
 	MonoLMF *lmf = mono_get_lmf ();
 	gsize num_bytes;
@@ -88,12 +97,10 @@ continuation_store (MonoContinuation *cont, int state, MonoException **e)
 	}
 
 	cont->lmf = lmf;
-	cont->return_ip = __builtin_extract_return_addr (__builtin_return_address (0));
-	cont->return_sp = __builtin_frame_address (0);
+	cont->return_sp = rsp;
 
 	num_bytes = (char*)cont->top_sp - (char*)cont->return_sp;
-
-	/*g_print ("store: %d bytes, sp: %p, ip: %p, lmf: %p\n", num_bytes, cont->return_sp, cont->return_ip, lmf);*/
+	g_assert ((num_bytes & (sizeof (gulong) - 1)) == 0);
 
 	if (cont->saved_stack && num_bytes <= cont->stack_alloc_size) {
 		/* clear to avoid GC retention */
@@ -102,14 +109,10 @@ continuation_store (MonoContinuation *cont, int state, MonoException **e)
 		}
 		cont->stack_used_size = num_bytes;
 	} else {
-		tasklets_lock ();
-		internal_init ();
-		if (cont->saved_stack)
-			mono_gc_free_fixed (cont->saved_stack);
+		free_stack (cont);
 		cont->stack_used_size = num_bytes;
-		cont->stack_alloc_size = num_bytes * 1.1;
-		cont->saved_stack = mono_gc_alloc_fixed (cont->stack_alloc_size, NULL, MONO_ROOT_SOURCE_THREADING, "saved tasklet stack");
-		tasklets_unlock ();
+		cont->stack_alloc_size = num_bytes + num_bytes / 8;
+		alloc_stack (cont);
 	}
 	memcpy (cont->saved_stack, cont->return_sp, num_bytes);
 
@@ -120,24 +123,87 @@ static MonoException*
 continuation_restore (MonoContinuation *cont, int state)
 {
 	MonoLMF **lmf_addr = mono_get_lmf_addr ();
-	MonoContinuationRestore restore_state = mono_tasklets_arch_restore ();
 
 	if (!cont->domain || !cont->return_sp)
 		return mono_get_exception_argument ("cont", "Continuation not initialized");
 	if (cont->domain != mono_domain_get () || !mono_native_thread_id_equals (cont->thread_id, mono_native_thread_id_get ()))
 		return mono_get_exception_argument ("cont", "Continuation from another thread or domain");
 
-	/*g_print ("restore: %p, state: %d\n", cont, state);*/
 	*lmf_addr = cont->lmf;
-	restore_state (cont, state, lmf_addr);
+
+#if defined(TARGET_AMD64)
+	asm volatile (
+		"	cld				\n"
+		"	movq	%%rdi,%%rsp		\n"	// point to where rbx was pushed
+		"	rep ; movsq			\n"
+		"	jmp	1f			\n"	// jump to where rbx gets popped
+		"	.p2align 4			\n"
+		"continuation_store:			\n"
+		"	pushq	%%rbp			\n"
+		"	movq	%%rsp,%%rbp		\n"
+		"	pushq	%%r15			\n"	// make certain rbx,r12-r15 get pused on stack
+		"	pushq	%%r14			\n"	// ... so continuation_xstore() will memcpy them
+		"	pushq	%%r13			\n"
+		"	pushq	%%r12			\n"
+		"	pushq	%%rbx			\n"
+		"	movq	%%rsp,%%rcx		\n"	// arg4: stack pointer (where rbx was pushed)
+		"	call	continuation_xtore	\n"
+		"	.p2align 4			\n"
+		"1:					\n"
+		"	popq	%%rbx			\n"
+		"	popq	%%r12			\n"
+		"	popq	%%r13			\n"
+		"	popq	%%r14			\n"
+		"	popq	%%r15			\n"
+		"	popq	%%rbp			\n"
+		"	retq				\n"
+		: :
+		"a" (state),
+		"c" (cont->stack_used_size >> 3),
+		"S" (cont->saved_stack),
+		"D" (cont->return_sp));
+#endif
+
+#if defined(TARGET_X86)
+	asm volatile (
+		"	cld				\n"
+		"	movl	%%edi,%%esp		\n"	// point to where ebx was pushed
+		"	rep ; movsl			\n"
+		"	jmp	1f			\n"	// jump to where ebx gets popped
+		"	.p2align 4			\n"
+		"continuation_store:			\n"
+		"	pushl	%%ebp			\n"
+		"	movl	%%esp,%%ebp		\n"
+		"	pushl	%%edi			\n"	// make certain ebx,esi,edi get pushed on stack
+		"	pushl	%%esi			\n"	// ... so continuation_xstore() will memcpy them
+		"	pushl	%%ebx			\n"
+		"	movl	%%esp,%%ecx		\n"
+		"	pushl	%%ecx			\n"	// arg4: stack pointer (where ebx was pushed)
+		"	pushl	16(%%ebp)		\n"	// arg3: exception pointer
+		"	pushl	12(%%ebp)		\n"	// arg2: state value
+		"	pushl	 8(%%ebp)		\n"	// arg1: struct pointer
+		"	call	continuation_xtore	\n"
+		"	addl	$16,%%esp		\n"
+		"	.p2align 4			\n"
+		"1:					\n"
+		"	popl	%%ebx			\n"
+		"	popl	%%esi			\n"
+		"	popl	%%edi			\n"
+		"	popl	%%ebp			\n"
+		"	retl				\n"
+		: :
+		"a" (state),
+		"c" (cont->stack_used_size >> 2),
+		"S" (cont->saved_stack),
+		"D" (cont->return_sp));
+#endif
+
 	g_assert_not_reached ();
 }
 
 void
 mono_tasklets_init (void)
 {
-	mono_os_mutex_init_recursive (&tasklets_mutex);
-
 	mono_add_internal_call ("Mono.Tasklets.Continuation::alloc", continuation_alloc);
 	mono_add_internal_call ("Mono.Tasklets.Continuation::free", continuation_free);
 	mono_add_internal_call ("Mono.Tasklets.Continuation::mark", continuation_mark_frame);

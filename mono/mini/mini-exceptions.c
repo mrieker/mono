@@ -2083,6 +2083,7 @@ mono_handle_hard_stack_ovf (MonoJitTlsData *jit_tls, MonoJitInfo *ji, void *ctx,
 #endif
 
 	/* we don't do much now, but we can warn the user with a useful message */
+	fflush (stdout);
 	mono_runtime_printf_err ("Stack overflow: IP: %p, fault addr: %p", mono_arch_ip_from_context (ctx), fault_addr);
 
 #ifdef MONO_ARCH_HAVE_SIGCTX_TO_MONOCTX
@@ -2161,6 +2162,8 @@ mono_handle_native_sigsegv (int signal, void *ctx, MONO_SIG_HANDLER_INFO_TYPE *i
 
 	if (handling_sigsegv)
 		return;
+
+	fflush (stdout);
 
 	if (mini_get_debug_options ()->suspend_on_sigsegv) {
 		mono_runtime_printf_err ("Received SIGSEGV, suspending...");

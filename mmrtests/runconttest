@@ -1,0 +1,25 @@
+#!/bin/bash -v
+
+set -e
+
+cd `dirname $0`
+thisdir=`pwd`
+cd ..
+basedir=`pwd`
+cd $thisdir
+
+insdir=$basedir/insdir
+
+if [ conttest.exe -ot conttest.cs ]
+then
+    export PATH=$insdir/bin:$PATH
+    mcs -debug -out:conttest.exe conttest.cs -reference:Mono.Tasklets.dll
+fi
+
+export MONO_PATH=$insdir/lib/mono/4.5
+echo '=   =   =   ='
+../mono/mini/mono-boehm --debug conttest.exe
+echo '=  =  =  =  ='
+../mono/mini/mono-sgen --debug conttest.exe
+echo '= = = = = = ='
+
