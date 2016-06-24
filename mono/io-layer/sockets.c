@@ -587,17 +587,33 @@ _wapi_recvmsg(guint32 fd, struct msghdr *msg, int recv_flags)
 int _wapi_send(guint32 fd, const void *msg, size_t len, int send_flags)
 {
 	gpointer handle = GUINT_TO_POINTER (fd);
+	int rc;
 	int ret;
-	
+
 	if (_wapi_handle_type (handle) != WAPI_HANDLE_SOCKET) {
 		WSASetLastError (WSAENOTSOCK);
 		return(SOCKET_ERROR);
 	}
 
-	do {
-		ret = send (fd, msg, len, send_flags);
-	} while (ret == -1 && errno == EINTR &&
-		 !_wapi_thread_cur_apc_pending ());
+	ret = 0;
+	while (1) {
+		do {
+			rc = send (fd, msg, len - ret, send_flags);
+		} while (rc == -1 && errno == EINTR &&
+			 !_wapi_thread_cur_apc_pending ());
+		if (rc <= 0) {
+			if (ret == 0) ret = rc;
+			break;
+		}
+		msg  = (void const *) ((char const *) msg + rc);
+		ret += rc;
+		if ((unsigned int) ret >= len) break;
+
+		if (send_flags & MSG_DONTWAIT) break;
+
+		rc = fcntl (fd, F_GETFL, 0);
+		if (rc & O_NONBLOCK) break;
+	}
 
 	if (ret == -1) {
 		gint errnum = errno;
