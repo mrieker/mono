@@ -6087,7 +6087,8 @@ ves_icall_System_Environment_Exit (int result)
  * if the program is going to exit, everything will be cleaned up when
  * NaCl exits anyway.
  */
-#ifndef __native_client__
+////#ifndef __native_client__
+#if 0000
 	if (!mono_runtime_try_shutdown ())
 		mono_thread_exit ();
 
