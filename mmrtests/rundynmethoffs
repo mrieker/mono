@@ -1,0 +1,30 @@
+#!/bin/bash -v
+
+set -e
+
+cd `dirname $0`
+thisdir=`pwd`
+cd ..
+basedir=`pwd`
+cd $thisdir
+
+insdir=~/monostuff/mono680out
+
+if [ dynmethoffs.exe -ot dynmethoffs.cs ]
+then
+    export PATH=$insdir/bin:$PATH
+    mcs -debug -out:dynmethoffs.exe dynmethoffs.cs -reference:Mono.Tasklets.dll
+fi
+
+set +e
+export MONO_PATH=$insdir/lib/mono/4.5
+echo '=   =   =   ='
+../mono/mini/mono-boehm --debug dynmethoffs.exe 12345 67
+../mono/mini/mono-boehm --debug dynmethoffs.exe 345 0
+../mono/mini/mono-boehm --debug dynmethoffs.exe 2345 78xx
+echo '=  =  =  =  ='
+../mono/mini/mono-sgen --debug dynmethoffs.exe 12345 67
+../mono/mini/mono-sgen --debug dynmethoffs.exe 345 0
+../mono/mini/mono-sgen --debug dynmethoffs.exe 2345 78xx
+echo '= = = = = = ='
+

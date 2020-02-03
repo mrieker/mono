@@ -1089,7 +1089,7 @@ ves_icall_get_trace (MonoException *exc, gint32 skip, MonoBoolean need_file_info
 		if (jinfo_get_method (ji)->wrapper_type) {
 			char *s;
 
-			sf->method = NULL;
+			sf->method = NULL; //
 			s = mono_method_get_name_full (method, TRUE, FALSE, MONO_TYPE_NAME_FORMAT_REFLECTION);
 			MonoString *name = mono_string_new_checked (domain, s, error);
 			g_free (s);
@@ -1099,7 +1099,9 @@ ves_icall_get_trace (MonoException *exc, gint32 skip, MonoBoolean need_file_info
 			}
 			MONO_OBJECT_SETREF_INTERNAL (sf, internal_method_name, name);
 		}
-		else {
+
+		// always return reflection method so we can get dynamic method info
+		{
 			MonoReflectionMethod *rm = mono_method_get_object_checked (domain, method, NULL, error);
 			if (!is_ok (error)) {
 				mono_error_set_pending_exception (error);
